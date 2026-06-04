@@ -3,6 +3,11 @@ import express from "express";
 import multer from "multer";
 import cors from "cors";
 import fs from "fs";
+import path from "path";
+import { fileURLToPath } from "url";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clientDist = path.join(__dirname, "../../client/dist");
 import { checkGrammar } from "./tools/grammar.js";
 import { compiledGraph, Command } from "./graph.js";
 import type {
@@ -22,6 +27,7 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 
 app.use(cors());
 app.use(express.json());
+app.use(express.static(clientDist));
 
 const upload = multer({
   dest: UPLOADS_DIR,
@@ -380,6 +386,10 @@ app.post("/api/resume-analysis", async (req, res) => {
       detail: error instanceof Error ? error.message : String(error),
     });
   }
+});
+
+app.get("*", (_req, res) => {
+  res.sendFile(path.join(clientDist, "index.html"));
 });
 
 app.listen(port, () => {

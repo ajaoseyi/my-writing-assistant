@@ -388,7 +388,7 @@ app.post("/api/resume-analysis", async (req, res) => {
   }
 });
 
-app.get("*", (_req, res) => {
+app.get("*splat", (_req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));
 });
 

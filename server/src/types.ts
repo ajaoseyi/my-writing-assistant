@@ -100,6 +100,19 @@ export interface PlagiarismResult {
 }
 
 // ---------------------------------------------------------------------------
+// AI detection
+// ---------------------------------------------------------------------------
+
+export type AiVerdict = "human" | "mixed" | "ai";
+
+export interface AiDetectionResult {
+  score: number;
+  verdict: AiVerdict;
+  /** true when the API key is missing or the API call failed */
+  skipped?: boolean;
+}
+
+// ---------------------------------------------------------------------------
 // Full report
 // ---------------------------------------------------------------------------
 
@@ -121,6 +134,7 @@ export interface FullReport {
   grammar_errors: GrammarErrorGroup[];
   fact_check_results: FactCheckResult[];
   plagiarism_summary: PlagiarismResult;
+  ai_detection: AiDetectionResult;
   platform_suggestions: Platform[];
   executive_summary: string;
 }

@@ -8,6 +8,7 @@ import {
   interrupt,
 } from "@langchain/langgraph";
 import type {
+  AiDetectionResult,
   ContentClassification,
   DetectedTone,
   FactCheckResult,
@@ -22,6 +23,7 @@ import { detectTone } from "./tools/detectTone.js";
 import { checkGrammar } from "./tools/grammar.js";
 import { factCheck } from "./tools/factCheck.js";
 import { plagiarismCheck } from "./tools/plagiarismCheck.js";
+import { aiDetect } from "./tools/aiDetect.js";
 import { generateReport } from "./tools/generateReport.js";
 
 // ---------------------------------------------------------------------------
@@ -36,6 +38,7 @@ const AnalysisAnnotation = Annotation.Root({
   grammar: Annotation<RawSuggestion[] | undefined>,
   factCheckResults: Annotation<FactCheckResult[] | undefined>,
   plagiarism: Annotation<PlagiarismResult | undefined>,
+  aiDetection: Annotation<AiDetectionResult | undefined>,
   report: Annotation<FullReport | undefined>,
 });
 
@@ -91,18 +94,21 @@ function interruptToneNode(
 async function parallelAnalysisNode(
   state: AnalysisState,
 ): Promise<Partial<AnalysisState>> {
-  // plagiarismCheck temporarily disabled
-  const plagiarism = { score: 0, matched_sources: [], verdict: "original" as const };
-  const [grammar, factCheckResults] = await Promise.all([
+  const plagiarismEnabled = process.env.ENABLE_PLAGIARISM_CHECK === "true";
+  const [grammar, factCheckResults, aiDetection, plagiarism] = await Promise.all([
     checkGrammar(
       state.text,
       { grammar: true, punctuation: true, paraphrase: false },
       state.confirmedTone,
     ),
     factCheck(state.text),
+    aiDetect(state.text),
+    plagiarismEnabled
+      ? plagiarismCheck(state.text)
+      : Promise.resolve<PlagiarismResult>({ score: 0, matched_sources: [], verdict: "original" }),
   ]);
 
-  return { grammar, factCheckResults, plagiarism };
+  return { grammar, factCheckResults, plagiarism, aiDetection };
 }
 
 // ---------------------------------------------------------------------------
@@ -117,6 +123,7 @@ async function generateReportNode(
     state.grammar ?? [],
     state.factCheckResults ?? [],
     state.plagiarism ?? { score: 0, matched_sources: [], verdict: "original" },
+    state.aiDetection ?? { score: 0, verdict: "human" },
     state.classification!,
     state.tone!,
   );

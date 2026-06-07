@@ -1,5 +1,6 @@
 import { FileDown } from "lucide-react";
-import type { FullReport } from "../types";
+import { useState, useEffect, useRef } from "react";
+import type { AiVerdict, FullReport } from "../types";
 
 interface ReportDisplayProps {
   report: FullReport;
@@ -22,6 +23,12 @@ const PLAGIARISM_STYLES: Record<
   original: { bg: "#ecfdf5", color: "#059669", bar: "#10b981" },
   partial: { bg: "#fffbeb", color: "#d97706", bar: "#f59e0b" },
   plagiarised: { bg: "#fef2f2", color: "#ef4444", bar: "#ef4444" },
+};
+
+const AI_DETECTION_STYLES: Record<AiVerdict, { bg: string; color: string; bar: string; label: string }> = {
+  human: { bg: "#ecfdf5", color: "#059669", bar: "#10b981", label: "Human-written" },
+  mixed: { bg: "#fffbeb", color: "#d97706", bar: "#f59e0b", label: "Mixed" },
+  ai:    { bg: "#fef2f2", color: "#ef4444", bar: "#ef4444", label: "AI-generated" },
 };
 
 const GRAMMAR_TYPE_COLORS: Record<string, string> = {
@@ -113,7 +120,220 @@ function MetaChip({ label, value }: { label: string; value: string }) {
   );
 }
 
+const PDF_STAGES = [
+  { at: 0,  label: "Preparing report data…" },
+  { at: 22, label: "Building document layout…" },
+  { at: 46, label: "Rendering all sections…" },
+  { at: 72, label: "Finalising PDF…" },
+  { at: 90, label: "Opening print dialog…" },
+];
+
+function PdfExportOverlay({
+  onTriggerPdf,
+  onDone,
+}: {
+  onTriggerPdf: () => void;
+  onDone: () => void;
+}) {
+  const [progress, setProgress] = useState(0);
+  const triggered = useRef(false);
+
+  useEffect(() => {
+    let p = 0;
+    const tick = () => {
+      const step = p < 40 ? 2.4 : p < 75 ? 1.4 : p < 92 ? 0.7 : 0.35;
+      p = Math.min(p + step + Math.random() * step * 0.4, 100);
+      setProgress(Math.round(p));
+
+      if (p >= 78 && !triggered.current) {
+        triggered.current = true;
+        onTriggerPdf();
+      }
+
+      if (p < 100) {
+        requestAnimationFrame(tick);
+      } else {
+        setTimeout(onDone, 420);
+      }
+    };
+    const id = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(id);
+  }, [onTriggerPdf, onDone]);
+
+  const stage =
+    [...PDF_STAGES].reverse().find((s) => progress >= s.at)?.label ??
+    PDF_STAGES[0].label;
+
+  const done = progress >= 100;
+  const circumference = 2 * Math.PI * 44; // r=44
+
+  return (
+    <div
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 1000,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        background: "rgba(0,0,0,0.45)",
+        backdropFilter: "blur(6px)",
+        WebkitBackdropFilter: "blur(6px)",
+      }}
+    >
+      <div
+        style={{
+          background: "var(--clr-surface)",
+          border: "1px solid var(--clr-border)",
+          borderRadius: "var(--radius-lg, 16px)",
+          padding: "40px 48px",
+          width: "min(420px, 90vw)",
+          display: "flex",
+          flexDirection: "column",
+          alignItems: "center",
+          gap: "0",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.22)",
+          textAlign: "center",
+        }}
+      >
+        {/* Ring */}
+        <div style={{ position: "relative", width: 100, height: 100, marginBottom: 28 }}>
+          <svg width={100} height={100} style={{ transform: "rotate(-90deg)" }}>
+            {/* Track */}
+            <circle
+              cx={50} cy={50} r={44}
+              fill="none"
+              stroke="var(--clr-border)"
+              strokeWidth={5}
+            />
+            {/* Progress arc */}
+            <circle
+              cx={50} cy={50} r={44}
+              fill="none"
+              stroke={done ? "#10b981" : "var(--clr-primary, #1e2c6e)"}
+              strokeWidth={5}
+              strokeLinecap="round"
+              strokeDasharray={circumference}
+              strokeDashoffset={circumference * (1 - progress / 100)}
+              style={{ transition: "stroke-dashoffset 0.08s linear, stroke 0.3s" }}
+            />
+          </svg>
+          {/* Centre label */}
+          <div
+            style={{
+              position: "absolute",
+              inset: 0,
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              justifyContent: "center",
+              gap: 0,
+            }}
+          >
+            {done ? (
+              <span style={{ fontSize: "1.6rem", lineHeight: 1 }}>✓</span>
+            ) : (
+              <>
+                <span
+                  style={{
+                    fontSize: "1.25rem",
+                    fontWeight: 700,
+                    color: "var(--clr-text)",
+                    lineHeight: 1,
+                  }}
+                >
+                  {progress}%
+                </span>
+              </>
+            )}
+          </div>
+        </div>
+
+        <p
+          style={{
+            fontSize: "1.05rem",
+            fontWeight: 700,
+            color: "var(--clr-text)",
+            marginBottom: 6,
+          }}
+        >
+          {done ? "PDF ready!" : "Generating your PDF report"}
+        </p>
+
+        <p
+          style={{
+            fontSize: "0.8125rem",
+            color: "var(--clr-text-secondary)",
+            minHeight: "1.4em",
+            marginBottom: 24,
+            transition: "opacity 0.2s",
+          }}
+        >
+          {done ? "The print dialog is opening…" : stage}
+        </p>
+
+        {/* Progress bar */}
+        <div
+          style={{
+            width: "100%",
+            height: 6,
+            background: "var(--clr-border)",
+            borderRadius: 999,
+            overflow: "hidden",
+          }}
+        >
+          <div
+            style={{
+              height: "100%",
+              width: `${progress}%`,
+              background: done
+                ? "#10b981"
+                : "linear-gradient(90deg, var(--clr-primary, #1e2c6e), #4f6ef7)",
+              borderRadius: 999,
+              transition: "width 0.08s linear, background 0.3s",
+            }}
+          />
+        </div>
+
+        {/* Stage chips */}
+        <div
+          style={{
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            justifyContent: "center",
+            marginTop: 18,
+          }}
+        >
+          {PDF_STAGES.map((s) => {
+            const active = progress >= s.at;
+            return (
+              <span
+                key={s.at}
+                style={{
+                  padding: "3px 10px",
+                  borderRadius: 999,
+                  fontSize: "0.7rem",
+                  fontWeight: 600,
+                  letterSpacing: "0.04em",
+                  background: active ? "#eff2ff" : "var(--clr-bg)",
+                  color: active ? "var(--clr-primary, #1e2c6e)" : "var(--clr-text-muted)",
+                  border: `1px solid ${active ? "#c7d2fe" : "var(--clr-border)"}`,
+                  transition: "all 0.25s",
+                }}
+              >
+                {s.label.replace("…", "")}
+              </span>
+            );
+          })}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export default function ReportDisplay({ report, onNewDocument }: ReportDisplayProps) {
+  const [pdfLoading, setPdfLoading] = useState(false);
   const pl = report.plagiarism_summary;
   const plStyle =
     PLAGIARISM_STYLES[pl.verdict] ?? PLAGIARISM_STYLES["original"];
@@ -122,7 +342,9 @@ export default function ReportDisplay({ report, onNewDocument }: ReportDisplayPr
     0,
   );
 
-  const downloadPdf = () => {
+  const executePdfDownload = () => {
+    const aiStyle = AI_DETECTION_STYLES[report.ai_detection.verdict] ?? AI_DETECTION_STYLES["human"];
+
     const factRows = report.fact_check_results.map((fc) => {
       const vs = VERDICT_STYLES[fc.verdict] ?? VERDICT_STYLES["unverified"];
       return `
@@ -218,6 +440,20 @@ export default function ReportDisplay({ report, onNewDocument }: ReportDisplayPr
   </div>
 
   <div class="section">
+    <div class="section-title">AI Detection</div>
+    <div class="card">
+      <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
+        <span>AI-generated probability</span>
+        <span style="font-weight:600;color:${aiStyle.color};">${report.ai_detection.score}%</span>
+      </div>
+      <div class="progress-bar-bg" style="margin-bottom:12px;">
+        <div class="progress-bar-fill" style="width:${Math.min(report.ai_detection.score, 100)}%;background:${aiStyle.bar};"></div>
+      </div>
+      <span style="padding:4px 12px;border-radius:999px;background:${aiStyle.bg};color:${aiStyle.color};font-size:0.75rem;font-weight:700;">${aiStyle.label}</span>
+    </div>
+  </div>
+
+  <div class="section">
     <div class="section-title">Plagiarism Check</div>
     <div class="card">
       <div style="display:flex;justify-content:space-between;margin-bottom:6px;">
@@ -242,7 +478,16 @@ export default function ReportDisplay({ report, onNewDocument }: ReportDisplayPr
     win.document.close();
   };
 
+  const downloadPdf = () => setPdfLoading(true);
+
   return (
+    <>
+    {pdfLoading && (
+      <PdfExportOverlay
+        onTriggerPdf={executePdfDownload}
+        onDone={() => setPdfLoading(false)}
+      />
+    )}
     <div
       style={{
         display: "flex",
@@ -740,6 +985,93 @@ export default function ReportDisplay({ report, onNewDocument }: ReportDisplayPr
         )}
       </Card>
 
+      {/* AI Detection */}
+      {(() => {
+        const ai = report.ai_detection;
+        const aiStyle = AI_DETECTION_STYLES[ai.verdict] ?? AI_DETECTION_STYLES["human"];
+        return (
+          <Card>
+            <SectionHeading>AI Detection</SectionHeading>
+            {ai.skipped ? (
+              <p style={{ fontSize: "0.875rem", color: "var(--clr-text-secondary)" }}>
+                AI detection could not run — check that <code>SAPLING_API_KEY</code> is set and valid in the server environment.
+              </p>
+            ) : (
+              <>
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: "14px",
+                    marginBottom: "16px",
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        marginBottom: "6px",
+                      }}
+                    >
+                      <span style={{ fontSize: "0.875rem", color: "var(--clr-text)" }}>
+                        AI-generated probability
+                      </span>
+                      <span
+                        style={{
+                          fontSize: "0.875rem",
+                          fontWeight: 600,
+                          color: aiStyle.color,
+                        }}
+                      >
+                        {ai.score}%
+                      </span>
+                    </div>
+                    <div
+                      style={{
+                        height: "6px",
+                        background: "var(--clr-border)",
+                        borderRadius: "var(--radius-full)",
+                        overflow: "hidden",
+                      }}
+                    >
+                      <div
+                        style={{
+                          height: "100%",
+                          width: `${Math.min(ai.score, 100)}%`,
+                          background: aiStyle.bar,
+                          borderRadius: "var(--radius-full)",
+                          transition: "width 0.4s",
+                        }}
+                      />
+                    </div>
+                  </div>
+                  <span
+                    style={{
+                      padding: "4px 12px",
+                      borderRadius: "var(--radius-full)",
+                      background: aiStyle.bg,
+                      color: aiStyle.color,
+                      fontSize: "0.775rem",
+                      fontWeight: 700,
+                      flexShrink: 0,
+                      border: `1px solid ${aiStyle.color}33`,
+                    }}
+                  >
+                    {aiStyle.label}
+                  </span>
+                </div>
+                <p style={{ fontSize: "0.8125rem", color: "var(--clr-text-secondary)" }}>
+                  {ai.verdict === "human" && "This document appears to be predominantly human-written."}
+                  {ai.verdict === "mixed" && "This document contains a mix of human and AI-generated content."}
+                  {ai.verdict === "ai" && "This document is likely AI-generated. Consider reviewing for authenticity."}
+                </p>
+              </>
+            )}
+          </Card>
+        );
+      })()}
+
       {/* Footer */}
       <div
         style={{
@@ -754,5 +1086,6 @@ export default function ReportDisplay({ report, onNewDocument }: ReportDisplayPr
         </button>
       </div>
     </div>
+    </>
   );
 }

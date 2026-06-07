@@ -29,6 +29,14 @@ export type DetectedTone =
   | "business"
   | "unknown";
 
+export type AiVerdict = "human" | "mixed" | "ai";
+
+export interface AiDetectionResult {
+  score: number;
+  verdict: AiVerdict;
+  skipped?: boolean;
+}
+
 export type PlagiarismVerdict = "original" | "partial" | "plagiarised";
 
 export interface MatchedSource {
@@ -65,6 +73,7 @@ export interface FullReport {
   grammar_errors: GrammarErrorGroup[];
   fact_check_results: FactCheckResult[];
   plagiarism_summary: PlagiarismResult;
+  ai_detection: AiDetectionResult;
   platform_suggestions: Platform[];
   executive_summary: string;
 }

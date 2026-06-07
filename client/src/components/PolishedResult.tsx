@@ -103,6 +103,16 @@ export default function PolishedResult({
     <div className="refine-step3-panels">
       {/* Left: document tabs */}
       <div className="polished-panel">
+        {onFullReport && (
+          <button
+            className="fact-check-cta"
+            onClick={onFullReport}
+            disabled={fullReportLoading}
+          >
+            <Search size={15} />
+            {fullReportLoading ? "Analysing…" : "Run Fact & Plagiarism Check"}
+          </button>
+        )}
         <div className="polished-tabs-bar">
           {(["polished", "original", "changes"] as Tab[]).map((t) => (
             <button
@@ -183,24 +193,6 @@ export default function PolishedResult({
             Download
           </button>
         </div>
-
-        {onFullReport && (
-          <div className="analysis-card">
-            <div className="analysis-card-left">
-              <div className="analysis-card-icon">
-                <Search size={14} />
-              </div>
-              <span className="analysis-card-label">Fact &amp; Plagiarism Check</span>
-            </div>
-            <button
-              className="analysis-card-btn"
-              onClick={onFullReport}
-              disabled={fullReportLoading}
-            >
-              {fullReportLoading ? "Analysing…" : "Run check"}
-            </button>
-          </div>
-        )}
 
         <div className="social-section">
           <div className="social-section-header-row">

@@ -1003,34 +1003,36 @@ textarea, input {
 .polished-tabs-bar {
   display: flex;
   align-items: center;
-  padding: 5px 6px;
+  padding: 10px 12px;
   border-bottom: 1px solid var(--clr-border);
-  gap: 2px;
+  gap: 6px;
 }
 
 .polished-tab {
-  padding: 5px 13px;
-  border-radius: 5px;
-  font-size: 0.825rem;
+  padding: 7px 18px;
+  border-radius: var(--radius-sm);
+  font-size: 0.8rem;
   color: var(--clr-text-secondary);
   background: transparent;
-  border: 1px solid transparent;
+  border: 1px solid var(--clr-border);
   cursor: pointer;
   font-family: inherit;
-  font-weight: 400;
+  font-weight: 500;
+  transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
 .polished-tab:hover {
   color: var(--clr-text);
   background: var(--clr-bg);
+  border-color: var(--clr-border-input);
 }
 
 .polished-tab.active {
-  color: var(--clr-text);
-  font-weight: 500;
-  background: var(--clr-surface);
-  border-color: var(--clr-border);
-  box-shadow: var(--shadow-sm);
+  color: #fff;
+  font-weight: 600;
+  background: var(--clr-primary);
+  border-color: var(--clr-primary);
+  box-shadow: none;
 }
 
 .polished-wc {
@@ -1211,6 +1213,34 @@ textarea, input {
 
 .summary-link-btn:hover {
   color: var(--clr-text);
+}
+
+/* Fact & Plagiarism Check CTA — full-width button above editor tabs */
+.fact-check-cta {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  padding: 10px 16px;
+  background: #fff7ed;
+  border: none;
+  border-bottom: 1px solid #fed7aa;
+  color: #ea580c;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: background 0.15s;
+}
+
+.fact-check-cta:hover:not(:disabled) {
+  background: #ffedd5;
+}
+
+.fact-check-cta:disabled {
+  opacity: 0.65;
+  cursor: default;
 }
 
 /* Analysis card (combined fact + plagiarism check) */

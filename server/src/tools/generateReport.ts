@@ -1,6 +1,7 @@
 import { ChatGroq } from "@langchain/groq";
 import { StringOutputParser } from "@langchain/core/output_parsers";
 import type {
+  AiDetectionResult,
   ContentClassification,
   FactCheckResult,
   FullReport,
@@ -36,6 +37,7 @@ export async function generateReport(
   grammar: RawSuggestion[],
   factCheckResults: FactCheckResult[],
   plagiarism: PlagiarismResult,
+  aiDetection: AiDetectionResult,
   classification: ContentClassification,
   tone: ToneDetection,
 ): Promise<FullReport> {
@@ -67,6 +69,8 @@ export async function generateReport(
 
   const plagiarismSummary = `Plagiarism score: ${plagiarism.score}% (${plagiarism.verdict}). ${plagiarism.matched_sources.length} source(s) matched.`;
 
+  const aiSummary = `AI detection score: ${aiDetection.score}% likely AI-generated (${aiDetection.verdict}).`;
+
   const summaryPrompt = `You are an editorial assistant. Write a 3–4 sentence plain-English executive summary of a document analysis. Be concise and professional.
 
 Document details:
@@ -76,6 +80,7 @@ Document details:
 - Grammar issues: ${grammarSummary}
 - Fact check: ${factSummary}
 - Plagiarism: ${plagiarismSummary}
+- AI detection: ${aiSummary}
 - Suggested platforms: ${classification.suggested_platforms.join(", ") || "none"}
 
 Write the executive summary now (plain text, no headers, no lists):`;
@@ -102,6 +107,7 @@ Write the executive summary now (plain text, no headers, no lists):`;
     grammar_errors: grammarErrors,
     fact_check_results: factCheckResults,
     plagiarism_summary: plagiarism,
+    ai_detection: aiDetection,
     platform_suggestions: classification.suggested_platforms,
     executive_summary: executiveSummary.trim(),
   };

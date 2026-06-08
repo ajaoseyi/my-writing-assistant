@@ -499,14 +499,7 @@ export default function ReportDisplay({ report, onNewDocument }: ReportDisplayPr
       }}
     >
       {/* Header row */}
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: "12px",
-        }}
-      >
+      <div className="report-header">
         <div>
           <p
             style={{
@@ -531,7 +524,7 @@ export default function ReportDisplay({ report, onNewDocument }: ReportDisplayPr
             Document Report
           </h2>
         </div>
-        <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+        <div className="report-header-actions">
           <button
             className="btn-ghost"
             onClick={downloadPdf}

@@ -1395,3 +1395,176 @@ textarea, input {
   color: var(--clr-text-muted);
   font-size: 0.825rem;
 }
+
+/* ── Report display header (step 4) ── */
+.report-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.report-header-actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-shrink: 0;
+}
+
+/* ── Responsive / Mobile ── */
+
+@media (max-width: 768px) {
+  /* Header */
+  .refine-header {
+    padding: 0 16px;
+    gap: 8px;
+  }
+
+  .refine-logo-sub {
+    display: none;
+  }
+
+  /* Step indicator — show label only for the active step */
+  .step-label {
+    display: none;
+  }
+
+  .step-item.active .step-label {
+    display: block;
+  }
+
+  .step-connector {
+    width: 20px;
+    margin: 0 2px;
+  }
+
+  /* Main content */
+  .refine-main {
+    padding: 28px 16px 36px;
+  }
+
+  /* Hero */
+  .refine-headline {
+    font-size: 2rem;
+  }
+
+  .refine-subhead {
+    max-width: 100%;
+  }
+
+  .refine-hero {
+    margin-bottom: 28px;
+  }
+
+  /* Step 1 — stack panels vertically */
+  .refine-step1-panels {
+    grid-template-columns: 1fr;
+  }
+
+  /* Step 2 — stack panels vertically */
+  .refine-step2-panels {
+    grid-template-columns: 1fr;
+  }
+
+  /* Suggestion panel — remove sticky and height cap */
+  .suggestion-panel {
+    position: static;
+    max-height: none;
+  }
+
+  /* Step 2 footer — stack actions */
+  .refine-step2-footer {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 8px;
+  }
+
+  /* Step 3 — stack panels vertically */
+  .refine-step3-panels {
+    grid-template-columns: 1fr;
+  }
+
+  /* Summary panel — remove sticky */
+  .summary-panel {
+    position: static;
+  }
+
+  /* Polished tabs — allow horizontal scroll */
+  .polished-tabs-bar {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  /* Report header (step 4) — stack title and buttons */
+  .report-header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .report-header-actions {
+    flex-wrap: wrap;
+  }
+}
+
+@media (max-width: 480px) {
+  /* Header */
+  .refine-header {
+    padding: 0 12px;
+    height: 52px;
+  }
+
+  .refine-status {
+    display: none;
+  }
+
+  /* Step indicator */
+  .step-circle {
+    width: 22px;
+    height: 22px;
+    font-size: 0.68rem;
+  }
+
+  .step-item.active .step-label {
+    font-size: 0.7rem;
+  }
+
+  .step-connector {
+    width: 12px;
+    margin: 0 1px;
+  }
+
+  /* Main content */
+  .refine-main {
+    padding: 20px 12px 28px;
+  }
+
+  /* Hero */
+  .refine-headline {
+    font-size: 1.65rem;
+  }
+
+  .refine-hero {
+    margin-bottom: 20px;
+  }
+
+  /* Document input tabs — scrollable */
+  .doc-input-tabs {
+    overflow-x: auto;
+    flex-wrap: nowrap;
+  }
+
+  .doc-tab-btn {
+    flex-shrink: 0;
+  }
+
+  /* Shrink doc body padding on small screens */
+  .doc-input-body {
+    padding: 14px 16px;
+    min-height: 220px;
+  }
+
+  /* Suggestion bulk actions — stack on very small screens */
+  .suggestion-bulk-actions {
+    flex-direction: column;
+  }
+}

@@ -89,13 +89,13 @@ export default function DocumentInput({
               >
                 <Upload size={28} className="upload-drop-icon" />
                 <span className="upload-drop-label">Click to select or drag and drop</span>
-                <span className="upload-drop-sub">.txt files up to 2 MB</span>
+                <span className="upload-drop-sub">.txt, .md, .pdf, .docx files up to 2 MB</span>
               </div>
             )}
             <input
               ref={fileInputRef}
               type="file"
-              accept=".txt,.md"
+              accept=".txt,.md,.pdf,.docx"
               onChange={handleFileChange}
               style={{ display: "none" }}
             />

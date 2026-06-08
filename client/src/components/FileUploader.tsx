@@ -24,7 +24,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, selectedFile 
 
   return (
     <div className="file-uploader">
-      <label>Upload Document (.txt, .md):</label>
+      <label>Upload Document (.txt, .md, .pdf, .docx):</label>
       
       {!selectedFile ? (
         <div 
@@ -37,7 +37,7 @@ const FileUploader: React.FC<FileUploaderProps> = ({ onFileSelect, selectedFile 
             type="file" 
             ref={fileInputRef} 
             onChange={handleFileChange} 
-            accept=".txt,.md"
+            accept=".txt,.md,.pdf,.docx"
             style={{ display: 'none' }}
           />
         </div>

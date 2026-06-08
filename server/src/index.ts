@@ -5,9 +5,8 @@ import cors from "cors";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const clientDist = path.join(__dirname, "../../client/dist");
+import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
+import mammoth from "mammoth";
 import { checkGrammar } from "./tools/grammar.js";
 import { compiledGraph, Command } from "./graph.js";
 import type {
@@ -16,6 +15,50 @@ import type {
   InterruptedResponse,
 } from "./types.js";
 import { TONE_OPTIONS } from "./types.js";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const clientDist = path.join(__dirname, "../../client/dist");
+
+async function extractPdfText(buffer: Buffer): Promise<string> {
+  const data = new Uint8Array(buffer);
+  const doc = await pdfjsLib.getDocument({ data, useSystemFonts: true }).promise;
+  const pageTexts: string[] = [];
+
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const textContent = await page.getTextContent();
+
+    let pageText = "";
+    let lastY: number | null = null;
+    let lastItemEndX = 0;
+
+    for (const item of textContent.items) {
+      if (!("str" in item) || !item.str) continue;
+
+      const x: number = item.transform[4];
+      const y: number = item.transform[5];
+
+      if (lastY !== null) {
+        const yDiff = Math.abs(y - lastY);
+        if (yDiff > 5) {
+          // New line — use newline, not space
+          pageText += "\n";
+        } else if (x > lastItemEndX + 1 && !pageText.endsWith(" ") && !item.str.startsWith(" ")) {
+          // Gap on the same line that isn't already a space
+          pageText += " ";
+        }
+      }
+
+      pageText += item.str;
+      lastY = y;
+      lastItemEndX = x + (item.width ?? 0);
+    }
+
+    pageTexts.push(pageText.trim());
+  }
+
+  return pageTexts.join("\n\n");
+}
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -52,18 +95,28 @@ function safeUnlink(filePath: string | null | undefined) {
 const MAX_CHARS = 12_000;
 
 /** Extracts and validates document content from the request, truncating if necessary. */
-function extractContent(
+async function extractContent(
   req: express.Request,
   tempFilePath: string | null,
-): { content: string; truncated: boolean } | { error: string; status: number } {
+): Promise<{ content: string; truncated: boolean } | { error: string; status: number }> {
   let content = "";
 
   if (tempFilePath) {
     try {
-      content = fs.readFileSync(tempFilePath, "utf-8");
+      const ext = req.file?.originalname?.toLowerCase().split(".").pop();
+      if (ext === "pdf") {
+        const buffer = fs.readFileSync(tempFilePath);
+        content = await extractPdfText(buffer);
+      } else if (ext === "docx") {
+        const buffer = fs.readFileSync(tempFilePath);
+        const result = await mammoth.extractRawText({ buffer });
+        content = result.value;
+      } else {
+        content = fs.readFileSync(tempFilePath, "utf-8");
+      }
     } catch {
       return {
-        error: "Could not read the uploaded file. Use a plain-text (.txt) file.",
+        error: "Could not read the uploaded file. Supported formats: .txt, .md, .pdf, .docx.",
         status: 422,
       };
     } finally {
@@ -116,12 +169,21 @@ app.post("/api/analyze", upload.single("document"), async (req, res) => {
     let content = "";
     if (tempFilePath) {
       try {
-        content = fs.readFileSync(tempFilePath, "utf-8");
+        const ext = req.file?.originalname?.toLowerCase().split(".").pop();
+        if (ext === "pdf") {
+          const buffer = fs.readFileSync(tempFilePath);
+          content = await extractPdfText(buffer);
+        } else if (ext === "docx") {
+          const buffer = fs.readFileSync(tempFilePath);
+          const result = await mammoth.extractRawText({ buffer });
+          content = result.value;
+        } else {
+          content = fs.readFileSync(tempFilePath, "utf-8");
+        }
       } catch {
         safeUnlink(tempFilePath);
         return res.status(422).json({
-          error:
-            "Could not read the uploaded file. Use a plain-text (.txt) file.",
+          error: "Could not read the uploaded file. Supported formats: .txt, .md, .pdf, .docx.",
         });
       } finally {
         safeUnlink(tempFilePath);
@@ -179,7 +241,7 @@ app.post("/api/analyze-full", upload.single("document"), async (req, res) => {
         .json({ error: "Server configuration error: GROQ_API_KEY is not set." });
     }
 
-    const extracted = extractContent(req, tempFilePath);
+    const extracted = await extractContent(req, tempFilePath);
     if ("error" in extracted) {
       return res.status(extracted.status).json({ error: extracted.error });
     }
@@ -254,7 +316,7 @@ app.post("/api/analyze-full-stream", upload.single("document"), async (req, res)
       return;
     }
 
-    const extracted = extractContent(req, tempFilePath);
+    const extracted = await extractContent(req, tempFilePath);
     if ("error" in extracted) {
       emit("error", { message: extracted.error });
       res.end();

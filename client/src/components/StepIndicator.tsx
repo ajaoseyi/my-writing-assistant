@@ -1,12 +1,11 @@
 interface StepIndicatorProps {
-  currentStep: 1 | 2 | 3 | 4;
+  currentStep: 1 | 2 | 3;
 }
 
 const steps = [
   { n: 1, label: "Add document" },
   { n: 2, label: "Review changes" },
   { n: 3, label: "Polished result" },
-  { n: 4, label: "Full report" },
 ];
 
 export default function StepIndicator({ currentStep }: StepIndicatorProps) {

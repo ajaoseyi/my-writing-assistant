@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { Copy, Download, Search, ExternalLink, Linkedin, Facebook, Instagram } from "lucide-react";
+import { Copy, Download, ExternalLink, Linkedin, Facebook, Instagram } from "lucide-react";
 import type { Suggestion } from "../App";
 import { countWords } from "../App";
+import { htmlToText } from "../utils/htmlToText";
 
 function XIcon({ size = 14 }: { size?: number }) {
   return (
@@ -24,16 +25,35 @@ type Tab = "polished" | "original" | "changes";
 interface PolishedResultProps {
   polishedContent: string;
   originalContent: string;
+  sourceHtml?: string;
   suggestions: Suggestion[];
   onReview: () => void;
   onNewDocument: () => void;
-  onFullReport?: () => void;
-  fullReportLoading?: boolean;
 }
 
 interface DiffPart {
   type: "unchanged" | "removed" | "added";
   text: string;
+}
+
+function applyToHtml(html: string, suggestions: Suggestion[]): string {
+  const usedRanges: [number, number][] = [];
+  const toApply = suggestions
+    .filter((s) => s.status === "accepted" && s.original)
+    .map((s) => ({ ...s, htmlIdx: html.indexOf(s.original) }))
+    .filter((s) => s.htmlIdx !== -1)
+    .filter((s) => {
+      const end = s.htmlIdx + s.original.length;
+      const overlaps = usedRanges.some(([us, ue]) => s.htmlIdx < ue && end > us);
+      if (!overlaps) { usedRanges.push([s.htmlIdx, end]); return true; }
+      return false;
+    })
+    .sort((a, b) => b.htmlIdx - a.htmlIdx);
+  let result = html;
+  for (const s of toApply) {
+    result = result.slice(0, s.htmlIdx) + s.replacement + result.slice(s.htmlIdx + s.original.length);
+  }
+  return result;
 }
 
 function buildDiff(original: string, accepted: Suggestion[]): DiffPart[] {
@@ -62,11 +82,10 @@ function buildDiff(original: string, accepted: Suggestion[]): DiffPart[] {
 export default function PolishedResult({
   polishedContent,
   originalContent,
+  sourceHtml,
   suggestions,
   onReview,
   onNewDocument,
-  onFullReport,
-  fullReportLoading,
 }: PolishedResultProps) {
   const [tab, setTab] = useState<Tab>("polished");
   const [copied, setCopied] = useState(false);
@@ -75,10 +94,19 @@ export default function PolishedResult({
   const grammarCount = accepted.filter((s) => s.type === "grammar").length;
   const punctCount = accepted.filter((s) => s.type === "punctuation").length;
   const paraphraseCount = accepted.filter((s) => s.type === "paraphrase").length;
+  const passiveCount = accepted.filter((s) => s.type === "passive-voice").length;
+  const sentenceCount = accepted.filter((s) => s.type === "sentence-length").length;
   const totalAccepted = accepted.length;
 
   const displayContent = tab === "polished" ? polishedContent : originalContent;
   const wc = countWords(displayContent);
+
+  const displayHtml =
+    sourceHtml
+      ? tab === "polished"
+        ? applyToHtml(sourceHtml, suggestions)
+        : sourceHtml
+      : null;
 
   const diffParts = buildDiff(originalContent, accepted);
 
@@ -103,16 +131,6 @@ export default function PolishedResult({
     <div className="refine-step3-panels">
       {/* Left: document tabs */}
       <div className="polished-panel">
-        {onFullReport && (
-          <button
-            className="fact-check-cta"
-            onClick={onFullReport}
-            disabled={fullReportLoading}
-          >
-            <Search size={15} />
-            {fullReportLoading ? "Analysing…" : "Run Fact & Plagiarism Check"}
-          </button>
-        )}
         <div className="polished-tabs-bar">
           {(["polished", "original", "changes"] as Tab[]).map((t) => (
             <button
@@ -129,7 +147,10 @@ export default function PolishedResult({
         </div>
 
         {tab !== "changes" && (
-          <div className="polished-body">{displayContent}</div>
+          <div
+            className="polished-body"
+            dangerouslySetInnerHTML={{ __html: displayHtml ?? displayContent }}
+          />
         )}
 
         {tab === "changes" && (
@@ -140,16 +161,16 @@ export default function PolishedResult({
               </p>
             ) : (
               diffParts.map((part, i) => {
-                if (part.type === "unchanged") return <span key={i}>{part.text}</span>;
+                if (part.type === "unchanged") return <span key={i}>{htmlToText(part.text)}</span>;
                 if (part.type === "removed")
                   return (
                     <span key={i} className="diff-del">
-                      {part.text}
+                      {htmlToText(part.text)}
                     </span>
                   );
                 return (
                   <span key={i} className="diff-ins">
-                    {part.text}
+                    {htmlToText(part.text)}
                   </span>
                 );
               })
@@ -180,6 +201,16 @@ export default function PolishedResult({
             <span className="summary-dot paraphrase" />
             <span className="summary-row-label">Paraphrase</span>
             <span className="summary-row-count">{paraphraseCount}</span>
+          </div>
+          <div className="summary-row">
+            <span className="summary-dot passive-voice" />
+            <span className="summary-row-label">Passive voice</span>
+            <span className="summary-row-count">{passiveCount}</span>
+          </div>
+          <div className="summary-row">
+            <span className="summary-dot sentence-length" />
+            <span className="summary-row-label">Long sentences</span>
+            <span className="summary-row-count">{sentenceCount}</span>
           </div>
         </div>
 

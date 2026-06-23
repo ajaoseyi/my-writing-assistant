@@ -1,20 +1,23 @@
 import "dotenv/config";
+import { createServer } from "node:http";
 import express from "express";
 import multer from "multer";
 import cors from "cors";
+import { Server as SocketIOServer } from "socket.io";
+import gdocsRouter from "./routes/gdocs.js";
 import fs from "fs";
 import path from "path";
 import { fileURLToPath } from "url";
 import * as pdfjsLib from "pdfjs-dist/legacy/build/pdf.mjs";
 import mammoth from "mammoth";
 import { checkGrammar } from "./tools/grammar.js";
-import { compiledGraph, Command } from "./graph.js";
-import type {
-  AnalyzeFullResponse,
-  DetectedTone,
-  InterruptedResponse,
-} from "./types.js";
-import { TONE_OPTIONS } from "./types.js";
+import { styleCheck } from "./tools/styleCheck.js";
+import { seoCheck } from "./tools/seoCheck.js";
+import { factCheck } from "./tools/factCheck.js";
+import type { RawSuggestion } from "./types.js";
+import { startPolling, stopPolling, updateLastContent } from "./gdocsSync.js";
+import { getAuthClient, isAuthorized } from "./gdocs/googleAuth.js";
+import { updateDocContent } from "./gdocs/googleApi.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const clientDist = path.join(__dirname, "../../client/dist");
@@ -60,6 +63,103 @@ async function extractPdfText(buffer: Buffer): Promise<string> {
   return pageTexts.join("\n\n");
 }
 
+async function extractPdfHtml(buffer: Buffer): Promise<string> {
+  const data = new Uint8Array(buffer);
+  const doc = await pdfjsLib.getDocument({ data, useSystemFonts: true }).promise;
+
+  type LineItem = { text: string; fontSize: number; y: number; x: number };
+  const allLines: LineItem[][] = [];
+
+  for (let i = 1; i <= doc.numPages; i++) {
+    const page = await doc.getPage(i);
+    const textContent = await page.getTextContent();
+
+    // Group text items into lines by Y proximity
+    const lineMap = new Map<number, { text: string; fontSize: number; x: number }[]>();
+    for (const item of textContent.items) {
+      if (!("str" in item) || !item.str.trim()) continue;
+      const y = Math.round(item.transform[5]);
+      const fontSize = Math.abs(item.transform[3]);
+      const x: number = item.transform[4];
+      if (!lineMap.has(y)) lineMap.set(y, []);
+      lineMap.get(y)!.push({ text: item.str, fontSize, x });
+    }
+
+    // Sort lines top-to-bottom (PDF Y increases upward, so descending)
+    const sortedYs = [...lineMap.keys()].sort((a, b) => b - a);
+    const pageLines: LineItem[] = sortedYs.map((y) => {
+      const items = lineMap.get(y)!.sort((a, b) => a.x - b.x);
+      const text = items.map((it) => it.text).join(" ").trim();
+      const fontSize = Math.max(...items.map((it) => it.fontSize));
+      return { text, fontSize, y, x: items[0]?.x ?? 0 };
+    });
+
+    allLines.push(pageLines);
+  }
+
+  const flat = allLines.flat();
+  if (flat.length === 0) return "";
+
+  // Determine body font size as the most common (mode) font size, rounded to 0.5pt
+  const sizeFreq = new Map<number, number>();
+  for (const line of flat) {
+    const rounded = Math.round(line.fontSize * 2) / 2;
+    sizeFreq.set(rounded, (sizeFreq.get(rounded) ?? 0) + 1);
+  }
+  let bodySize = flat[0].fontSize;
+  let maxFreq = 0;
+  for (const [size, freq] of sizeFreq) {
+    if (freq > maxFreq) { maxFreq = freq; bodySize = size; }
+  }
+
+  // Collect distinct heading sizes (significantly larger than body)
+  const headingSizes = [...new Set(
+    flat
+      .map((l) => Math.round(l.fontSize * 2) / 2)
+      .filter((s) => s >= bodySize * 1.15)
+  )].sort((a, b) => b - a); // largest first
+
+  const tagForSize = (size: number): string | null => {
+    const rounded = Math.round(size * 2) / 2;
+    const idx = headingSizes.indexOf(rounded);
+    if (idx === 0) return "h1";
+    if (idx === 1) return "h2";
+    if (idx === 2) return "h3";
+    if (idx > 2) return "h3";
+    return null;
+  };
+
+  // Build HTML
+  const htmlParts: string[] = [];
+  let paraLines: string[] = [];
+  let prevY: number | null = null;
+
+  const flushPara = () => {
+    if (paraLines.length > 0) {
+      htmlParts.push(`<p>${paraLines.join(" ")}</p>`);
+      paraLines = [];
+    }
+  };
+
+  for (const line of flat) {
+    const tag = tagForSize(line.fontSize);
+    if (tag) {
+      flushPara();
+      htmlParts.push(`<${tag}>${line.text}</${tag}>`);
+    } else {
+      // Large Y gap between body lines = paragraph break
+      if (prevY !== null && Math.abs(line.y - prevY) > 18 && paraLines.length > 0) {
+        flushPara();
+      }
+      paraLines.push(line.text);
+    }
+    prevY = line.y;
+  }
+  flushPara();
+
+  return htmlParts.join("\n");
+}
+
 const app = express();
 const port = process.env.PORT || 3001;
 
@@ -71,6 +171,7 @@ if (!fs.existsSync(UPLOADS_DIR)) {
 app.use(cors());
 app.use(express.json());
 app.use(express.static(clientDist));
+app.use("/api/gdocs", gdocsRouter);
 
 const upload = multer({
   dest: UPLOADS_DIR,
@@ -94,51 +195,6 @@ function safeUnlink(filePath: string | null | undefined) {
 
 const MAX_CHARS = 12_000;
 
-/** Extracts and validates document content from the request, truncating if necessary. */
-async function extractContent(
-  req: express.Request,
-  tempFilePath: string | null,
-): Promise<{ content: string; truncated: boolean } | { error: string; status: number }> {
-  let content = "";
-
-  if (tempFilePath) {
-    try {
-      const ext = req.file?.originalname?.toLowerCase().split(".").pop();
-      if (ext === "pdf") {
-        const buffer = fs.readFileSync(tempFilePath);
-        content = await extractPdfText(buffer);
-      } else if (ext === "docx") {
-        const buffer = fs.readFileSync(tempFilePath);
-        const result = await mammoth.extractRawText({ buffer });
-        content = result.value;
-      } else {
-        content = fs.readFileSync(tempFilePath, "utf-8");
-      }
-    } catch {
-      return {
-        error: "Could not read the uploaded file. Supported formats: .txt, .md, .pdf, .docx.",
-        status: 422,
-      };
-    } finally {
-      safeUnlink(tempFilePath);
-    }
-  } else if (req.body?.content) {
-    content = req.body.content;
-  }
-
-  if (!content || content.trim().length === 0) {
-    return { error: "No content provided.", status: 400 };
-  }
-
-  let truncated = false;
-  if (content.length > MAX_CHARS) {
-    content = content.slice(0, MAX_CHARS);
-    truncated = true;
-  }
-
-  return { content, truncated };
-}
-
 // ---------------------------------------------------------------------------
 // POST /api/analyze  (original endpoint — kept fully intact for compatibility)
 // ---------------------------------------------------------------------------
@@ -156,29 +212,58 @@ app.post("/api/analyze", upload.single("document"), async (req, res) => {
 
     const { options, content: bodyContent } = req.body;
 
-    let selectedOptions = { grammar: true, punctuation: true, paraphrase: false };
+    let selectedOptions: {
+      grammar: boolean;
+      punctuation: boolean;
+      paraphrase: boolean;
+      passiveVoice: boolean;
+      sentenceLength: boolean;
+      seo: boolean;
+      metaTitle?: string;
+      metaDescription?: string;
+      focusKeyword?: string;
+    } = {
+      grammar: true,
+      punctuation: false,
+      paraphrase: false,
+      passiveVoice: false,
+      sentenceLength: false,
+      seo: false,
+    };
     if (options) {
       try {
-        selectedOptions =
-          typeof options === "string" ? JSON.parse(options) : options;
+        const parsed = typeof options === "string" ? JSON.parse(options) : options;
+        selectedOptions = { ...selectedOptions, ...parsed };
       } catch {
         /* use defaults */
       }
     }
+    // Punctuation check retired (too many phantom fixes) — force it off even if a
+    // stale client still requests it.
+    selectedOptions.punctuation = false;
 
     let content = "";
+    let seoContent = ""; // HTML when available, falls back to plain text
     if (tempFilePath) {
       try {
         const ext = req.file?.originalname?.toLowerCase().split(".").pop();
         if (ext === "pdf") {
           const buffer = fs.readFileSync(tempFilePath);
-          content = await extractPdfText(buffer);
+          [content, seoContent] = await Promise.all([
+            extractPdfText(buffer),
+            extractPdfHtml(buffer),
+          ]);
         } else if (ext === "docx") {
           const buffer = fs.readFileSync(tempFilePath);
-          const result = await mammoth.extractRawText({ buffer });
-          content = result.value;
+          const [textResult, htmlResult] = await Promise.all([
+            mammoth.extractRawText({ buffer }),
+            mammoth.convertToHtml({ buffer }),
+          ]);
+          content = textResult.value;
+          seoContent = htmlResult.value || content;
         } else {
           content = fs.readFileSync(tempFilePath, "utf-8");
+          seoContent = content;
         }
       } catch {
         safeUnlink(tempFilePath);
@@ -190,6 +275,7 @@ app.post("/api/analyze", upload.single("document"), async (req, res) => {
       }
     } else if (bodyContent) {
       content = bodyContent;
+      seoContent = bodyContent;
     }
 
     if (!content || content.trim().length === 0) {
@@ -201,13 +287,39 @@ app.post("/api/analyze", upload.single("document"), async (req, res) => {
       content = content.slice(0, MAX_CHARS);
       truncated = true;
     }
+    if (seoContent.length > MAX_CHARS) {
+      seoContent = seoContent.slice(0, MAX_CHARS);
+    }
 
-    const suggestions = await checkGrammar(content, selectedOptions);
+    // Grammar detection now lives entirely in Harper on the client — the LLM
+    // grammar layer was removed because it hallucinated non-issues. The grammar
+    // tool is only invoked for paraphrasing, which Harper can't do.
+    const grammarPromise: Promise<RawSuggestion[]> = selectedOptions.paraphrase
+      ? checkGrammar(content, { grammar: false, punctuation: false, paraphrase: true })
+      : Promise.resolve([]);
+
+    const [grammarSuggestions, styleSuggestions, seoResult] = await Promise.all([
+      grammarPromise,
+      styleCheck(content, {
+        passiveVoice: selectedOptions.passiveVoice,
+        sentenceLength: selectedOptions.sentenceLength,
+      }),
+      selectedOptions.seo
+        ? seoCheck(seoContent, {
+            metaTitle: selectedOptions.metaTitle,
+            metaDescription: selectedOptions.metaDescription,
+            focusKeyword: selectedOptions.focusKeyword,
+          })
+        : Promise.resolve(null),
+    ]);
+
+    const suggestions = [...grammarSuggestions, ...styleSuggestions];
 
     const responseObj: Record<string, unknown> = {
       suggestions,
       sourceContent: content,
     };
+    if (seoResult) responseObj.seoResult = seoResult;
     if (truncated) {
       responseObj.warning = `Document truncated to ${MAX_CHARS} characters for processing.`;
     }
@@ -224,227 +336,31 @@ app.post("/api/analyze", upload.single("document"), async (req, res) => {
 });
 
 // ---------------------------------------------------------------------------
-// POST /api/analyze-full
-// Runs the full autonomous analysis pipeline (LangGraph).
-// Returns either a complete FullReport or an interrupt payload asking the
-// user to confirm the detected tone when confidence is below 70%.
+// POST /api/fact-check
+// Fact-checks the already-extracted document text (sent as JSON `content`).
+// Extracts verifiable claims and verifies each against live web search.
+// Returns { factCheckResults: FactCheckResult[] }.
 // ---------------------------------------------------------------------------
 
-app.post("/api/analyze-full", upload.single("document"), async (req, res) => {
-  const tempFilePath = req.file ? req.file.path : null;
-
+app.post("/api/fact-check", async (req, res) => {
   try {
     if (!process.env.GROQ_API_KEY) {
-      safeUnlink(tempFilePath);
       return res
         .status(503)
         .json({ error: "Server configuration error: GROQ_API_KEY is not set." });
     }
 
-    const extracted = await extractContent(req, tempFilePath);
-    if ("error" in extracted) {
-      return res.status(extracted.status).json({ error: extracted.error });
+    const { content } = (req.body ?? {}) as { content?: string };
+    if (!content || !String(content).trim()) {
+      return res.status(400).json({ error: "No content provided." });
     }
 
-    const { content, truncated } = extracted;
-    const threadId = crypto.randomUUID();
-    const config = { configurable: { thread_id: threadId } };
-
-    await compiledGraph.invoke({ text: content }, config);
-
-    const state = await compiledGraph.getState(config);
-
-    // Check if the graph is paused at an interrupt (tone confidence < 70)
-    if (state.next.length > 0) {
-      const interrupts = (state.tasks as Array<{ interrupts?: Array<{ value: unknown }> }>)
-        .flatMap((t) => t.interrupts ?? []);
-      const interruptData = interrupts[0]?.value as
-        | { detected: DetectedTone; options: DetectedTone[] }
-        | undefined;
-
-      const response: InterruptedResponse = {
-        interrupted: true,
-        threadId,
-        toneOptions: interruptData?.options ?? TONE_OPTIONS,
-        detected: interruptData?.detected ?? "unknown",
-        confidence: (state.values as { tone?: { confidence: number } }).tone?.confidence ?? 0,
-      };
-
-      return res.json({ ...response, ...(truncated ? { warning: `Document truncated to ${MAX_CHARS} characters for processing.` } : {}) });
-    }
-
-    const report = (state.values as { report?: unknown }).report;
-    const responseBody: AnalyzeFullResponse & { warning?: string } = { report: report as AnalyzeFullResponse["report"] };
-    if (truncated) {
-      responseBody.warning = `Document truncated to ${MAX_CHARS} characters for processing.`;
-    }
-
-    return res.json(responseBody);
+    const factCheckResults = await factCheck(String(content).slice(0, MAX_CHARS));
+    return res.json({ factCheckResults });
   } catch (error: unknown) {
-    safeUnlink(tempFilePath);
-    console.error("Unhandled error in /api/analyze-full:", error);
+    console.error("Unhandled error in /api/fact-check:", error);
     return res.status(500).json({
-      error: "Failed to run full analysis.",
-      detail: error instanceof Error ? error.message : String(error),
-    });
-  }
-});
-
-// ---------------------------------------------------------------------------
-// POST /api/analyze-full-stream
-// SSE streaming version of /api/analyze-full.
-// Emits named events as each pipeline stage completes so the client can show
-// live activity feedback.  Events: status | warning | interrupt | report | done | error
-// ---------------------------------------------------------------------------
-
-app.post("/api/analyze-full-stream", upload.single("document"), async (req, res) => {
-  const tempFilePath = req.file ? req.file.path : null;
-
-  res.setHeader("Content-Type", "text/event-stream");
-  res.setHeader("Cache-Control", "no-cache");
-  res.setHeader("Connection", "keep-alive");
-  res.flushHeaders();
-
-  const emit = (event: string, data: unknown) => {
-    res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
-  };
-
-  try {
-    if (!process.env.GROQ_API_KEY) {
-      emit("error", { message: "Server configuration error: GROQ_API_KEY is not set." });
-      res.end();
-      return;
-    }
-
-    const extracted = await extractContent(req, tempFilePath);
-    if ("error" in extracted) {
-      emit("error", { message: extracted.error });
-      res.end();
-      return;
-    }
-
-    const { content, truncated } = extracted;
-    if (truncated) {
-      emit("warning", { message: `Document truncated to ${MAX_CHARS} characters for processing.` });
-    }
-
-    const threadId = crypto.randomUUID();
-    const config = { configurable: { thread_id: threadId } };
-
-    emit("status", { stage: "start", message: "Analysis pipeline started" });
-
-    let toneConfidence = 0;
-
-    const graphStream = await compiledGraph.stream(
-      { text: content },
-      { ...config, streamMode: "updates" as const },
-    );
-
-    for await (const chunk of graphStream) {
-      for (const [node, data] of Object.entries(chunk)) {
-        if (node === "__interrupt__") {
-          const items = data as Array<{ value: unknown }>;
-          const iv = (items[0]?.value ?? {}) as { detected?: DetectedTone; options?: DetectedTone[] };
-          emit("interrupt", {
-            threadId,
-            detected: iv.detected ?? "unknown",
-            options: iv.options ?? TONE_OPTIONS,
-            confidence: toneConfidence,
-          });
-          res.end();
-          return;
-        }
-
-        const nodeData = data as Record<string, unknown>;
-
-        if (node === "classifyAndTone") {
-          const tone = nodeData.tone as { detected_tone: string; confidence: number } | undefined;
-          const cls = nodeData.classification as { content_type: string } | undefined;
-          toneConfidence = tone?.confidence ?? 0;
-          emit("status", {
-            stage: "classifyAndTone",
-            message: tone
-              ? `Tone: ${tone.detected_tone} (${tone.confidence}% confidence)${cls ? `  ·  Content type: ${cls.content_type}` : ""}`
-              : "Tone detection and content classification complete",
-          });
-        } else if (node === "parallelAnalysis") {
-          const grammar = nodeData.grammar as unknown[] | undefined;
-          const facts = nodeData.factCheckResults as unknown[] | undefined;
-          emit("status", {
-            stage: "parallelAnalysis",
-            message: `Grammar: ${grammar?.length ?? 0} issue(s)  ·  Fact check: ${facts?.length ?? 0} claim(s) verified via Tavily`,
-            grammar_count: grammar?.length ?? 0,
-            fact_check_count: facts?.length ?? 0,
-          });
-        } else if (node === "generateReport") {
-          emit("status", { stage: "generateReport", message: "Executive summary generated" });
-        }
-      }
-    }
-
-    const state = await compiledGraph.getState(config);
-
-    // Fallback: if __interrupt__ wasn't emitted in the stream but the graph
-    // is still paused (state.next is non-empty), surface the interrupt now.
-    if (state.next.length > 0) {
-      const interrupts = (state.tasks as Array<{ interrupts?: Array<{ value: unknown }> }>)
-        .flatMap((t) => t.interrupts ?? []);
-      const iv = (interrupts[0]?.value ?? {}) as { detected?: DetectedTone; options?: DetectedTone[] };
-      const toneState = (state.values as { tone?: { detected_tone?: DetectedTone; confidence?: number } }).tone;
-      emit("interrupt", {
-        threadId,
-        detected: iv.detected ?? toneState?.detected_tone ?? "unknown",
-        options: iv.options ?? TONE_OPTIONS,
-        confidence: toneConfidence || toneState?.confidence || 0,
-      });
-      return;
-    }
-
-    const report = (state.values as { report?: unknown }).report;
-    emit("report", { report });
-    emit("done", {});
-  } catch (error: unknown) {
-    safeUnlink(tempFilePath);
-    emit("error", { message: error instanceof Error ? error.message : String(error) });
-  } finally {
-    res.end();
-  }
-});
-
-// ---------------------------------------------------------------------------
-// POST /api/resume-analysis
-// Resumes a previously interrupted full-analysis graph thread after the user
-// has selected their preferred tone. Requires threadId and tone in the body.
-// ---------------------------------------------------------------------------
-
-app.post("/api/resume-analysis", async (req, res) => {
-  try {
-    const { threadId, tone } = req.body as { threadId?: string; tone?: string };
-
-    if (!threadId || !tone) {
-      return res.status(400).json({ error: "threadId and tone are required." });
-    }
-
-    if (!(TONE_OPTIONS as string[]).includes(tone)) {
-      return res.status(400).json({ error: `Invalid tone. Must be one of: ${TONE_OPTIONS.join(", ")}` });
-    }
-
-    const config = { configurable: { thread_id: threadId } };
-    await compiledGraph.invoke(new Command({ resume: tone }), config);
-
-    const state = await compiledGraph.getState(config);
-    const report = (state.values as { report?: unknown }).report;
-
-    if (!report) {
-      return res.status(500).json({ error: "Analysis did not produce a report." });
-    }
-
-    const response: AnalyzeFullResponse = { report: report as AnalyzeFullResponse["report"] };
-    return res.json(response);
-  } catch (error: unknown) {
-    console.error("Unhandled error in /api/resume-analysis:", error);
-    return res.status(500).json({
-      error: "Failed to resume analysis.",
+      error: "Failed to fact-check document.",
       detail: error instanceof Error ? error.message : String(error),
     });
   }
@@ -454,6 +370,69 @@ app.get("*splat", (_req, res) => {
   res.sendFile(path.join(clientDist, "index.html"));
 });
 
-app.listen(port, () => {
+const httpServer = createServer(app);
+const io = new SocketIOServer(httpServer, {
+  cors: { origin: "*", methods: ["GET", "POST"] },
+});
+
+io.on("connection", (socket) => {
+  let joinedSession: { sessionId: string; docId: string } | null = null;
+
+  socket.on("gdocs:join", ({ sessionId, docId }: { sessionId: string; docId: string }) => {
+    if (!isAuthorized(sessionId)) {
+      socket.emit("gdocs:error", { message: "Not authorized. Reconnect your Google account." });
+      return;
+    }
+    joinedSession = { sessionId, docId };
+    socket.join(`session:${sessionId}`);
+    startPolling(sessionId, docId, io);
+  });
+
+  socket.on("gdocs:leave", ({ sessionId, docId }: { sessionId: string; docId: string }) => {
+    joinedSession = null;
+    stopPolling(sessionId, docId);
+    socket.leave(`session:${sessionId}`);
+  });
+
+  socket.on("disconnect", () => {
+    if (joinedSession) {
+      stopPolling(joinedSession.sessionId, joinedSession.docId);
+    }
+  });
+
+  socket.on(
+    "app:changed",
+    async ({ sessionId, docId, html }: { sessionId: string; docId: string; html: string }) => {
+      if (!isAuthorized(sessionId)) {
+        socket.emit("app:changed:error", { message: "Not authorized." });
+        return;
+      }
+      try {
+        const auth = getAuthClient(sessionId);
+        await updateDocContent(docId, html, auth);
+        updateLastContent(sessionId, docId, html);
+        socket.emit("app:changed:ack", { docId });
+      } catch (err) {
+        // A 403 means the connected Google session lacks Drive write scope
+        // (typically a session authorized under the old read-only scope).
+        const status = (err as { code?: number; status?: number })?.code
+          ?? (err as { status?: number })?.status;
+        if (status === 403) {
+          socket.emit("app:changed:error", {
+            message:
+              "No write access to this document. Disconnect and reconnect your Google account to grant edit permission, then try again.",
+            needsReauth: true,
+          });
+          return;
+        }
+        socket.emit("app:changed:error", {
+          message: err instanceof Error ? err.message : String(err),
+        });
+      }
+    },
+  );
+});
+
+httpServer.listen(port, () => {
   console.log(`Server running at http://localhost:${port}`);
 });

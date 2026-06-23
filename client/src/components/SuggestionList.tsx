@@ -1,5 +1,14 @@
 import { useState } from "react";
-import type { Suggestion } from "../App";
+import type { Suggestion, SuggestionType } from "../App";
+
+const TYPE_LABEL: Record<SuggestionType, string> = {
+  grammar: "grammar",
+  punctuation: "punctuation",
+  paraphrase: "paraphrase",
+  "passive-voice": "passive voice",
+  "passive-voice-agentless": "passive voice",
+  "sentence-length": "long sentence",
+};
 
 interface SuggestionListProps {
   suggestions: Suggestion[];
@@ -95,28 +104,38 @@ interface SuggestionCardProps {
 
 function SuggestionCard({ suggestion: s, onAccept, onDismiss }: SuggestionCardProps) {
   const isPending = s.status === "pending";
+  const isAgentless = s.type === "passive-voice-agentless";
 
   return (
     <div className={`sg-card ${s.status}`}>
       <div className="sg-card-top">
-        <span className={`sg-badge ${s.type}`}>{s.type}</span>
+        <span className={`sg-badge ${s.type}`}>{TYPE_LABEL[s.type] ?? s.type}</span>
         {s.status === "accepted" && <span className="sg-done-tag">✓ Accepted</span>}
         {s.status === "dismissed" && <span className="sg-dismissed-tag">Dismissed</span>}
       </div>
 
-      <div className="sg-diff">
-        <span className="sg-old">{s.original}</span>
-        <span className="sg-arrow">→</span>
-        <span className="sg-new">{s.replacement}</span>
-      </div>
+      {isAgentless ? (
+        <div className="sg-agentless">
+          <span className="sg-old">{s.original}</span>
+          <p className="sg-agentless-note">Actor unclear — rewrite manually</p>
+        </div>
+      ) : (
+        <div className="sg-diff">
+          <span className="sg-old">{s.original}</span>
+          <span className="sg-arrow">→</span>
+          <span className="sg-new">{s.replacement}</span>
+        </div>
+      )}
 
       <p className="sg-explanation">{s.explanation}</p>
 
       {isPending && (
         <div className="sg-actions">
-          <button className="btn-accept" onClick={() => onAccept(s.id)}>
-            ✓ Accept
-          </button>
+          {!isAgentless && (
+            <button className="btn-accept" onClick={() => onAccept(s.id)}>
+              ✓ Accept
+            </button>
+          )}
           <button className="btn-dismiss-card" onClick={() => onDismiss(s.id)}>
             ✕ Dismiss
           </button>

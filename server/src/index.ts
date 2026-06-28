@@ -413,6 +413,7 @@ io.on("connection", (socket) => {
         updateLastContent(sessionId, docId, html);
         socket.emit("app:changed:ack", { docId });
       } catch (err) {
+        console.error("gdocs app:changed failed:", err);
         // A 403 means the connected Google session lacks Drive write scope
         // (typically a session authorized under the old read-only scope).
         const status = (err as { code?: number; status?: number })?.code

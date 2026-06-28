@@ -42,6 +42,7 @@ export interface DocumentInputProps {
   onGdocsDisconnect: () => void;
   gdocsSyncStatus: "idle" | "syncing" | "error";
   gdocsExternalChangeNotice: string | null;
+  gdocsSyncErrorMessage?: string | null;
 }
 
 // ── Google Docs SVG icon ────────────────────────────────────────────────────
@@ -173,6 +174,7 @@ function GDocsBanner({
   onDisconnect,
   syncStatus,
   externalChangeNotice,
+  syncErrorMessage,
 }: {
   configured: boolean;
   connected: boolean;
@@ -186,6 +188,7 @@ function GDocsBanner({
   onDisconnect: () => void;
   syncStatus: "idle" | "syncing" | "error";
   externalChangeNotice: string | null;
+  syncErrorMessage?: string | null;
 }) {
   const [showImport, setShowImport] = useState(false);
   const [docInput, setDocInput] = useState("");
@@ -320,6 +323,10 @@ function GDocsBanner({
         <div className="gdocs-external-change-notice">{externalChangeNotice}</div>
       )}
 
+      {syncErrorMessage && (
+        <div className="gdocs-sync-error-notice">{syncErrorMessage}</div>
+      )}
+
       {showImport && connected && (
         <div className="gdocs-import-panel">
           <input
@@ -361,7 +368,7 @@ export default function DocumentInput({
   gdocsImporting, gdocsCreating,
   gdocsDocUrl, importedDocTitle,
   onGdocsConnect, onGdocsImport, onCreateGdoc, onGdocsDisconnect,
-  gdocsSyncStatus, gdocsExternalChangeNotice,
+  gdocsSyncStatus, gdocsExternalChangeNotice, gdocsSyncErrorMessage,
 }: DocumentInputProps) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -453,6 +460,7 @@ export default function DocumentInput({
               onDisconnect={onGdocsDisconnect}
               syncStatus={gdocsSyncStatus}
               externalChangeNotice={gdocsExternalChangeNotice}
+              syncErrorMessage={gdocsSyncErrorMessage}
             />
             <RichTextEditor
               key={`editor-${richEditorResetKey}`}

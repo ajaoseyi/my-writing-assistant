@@ -199,6 +199,7 @@ export default function App() {
   const gdocsPushTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const [gdocsSyncStatus, setGdocsSyncStatus] = useState<"idle" | "syncing" | "error">("idle");
   const [gdocsExternalChangeNotice, setGdocsExternalChangeNotice] = useState<string | null>(null);
+  const [gdocsSyncErrorMessage, setGdocsSyncErrorMessage] = useState<string | null>(null);
   const [fixAllSaved, setFixAllSaved] = useState(false);
   const gdocsSessionId = localStorage.getItem("gdocs_session");
 
@@ -332,8 +333,10 @@ export default function App() {
     setTimeout(() => setGdocsExternalChangeNotice(null), 5000);
   }, []);
 
-  const onSyncError = useCallback((_msg: string) => {
+  const onSyncError = useCallback((msg: string) => {
+    console.error("Google Docs live sync failed:", msg);
     setGdocsSyncStatus("error");
+    setGdocsSyncErrorMessage(msg);
   }, []);
 
   const { pushToGdoc, syncStatus, suppressEmitRef } = useGdocsSync({
@@ -705,6 +708,7 @@ export default function App() {
                 onGdocsDisconnect={handleGdocsDisconnect}
                 gdocsSyncStatus={gdocsSyncStatus}
                 gdocsExternalChangeNotice={gdocsExternalChangeNotice}
+                gdocsSyncErrorMessage={gdocsSyncStatus === "error" ? gdocsSyncErrorMessage : null}
               />
               <CheckOptions
                 options={options}

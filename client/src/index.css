@@ -1874,6 +1874,17 @@ a.btn-primary {
   line-height: 1.4;
 }
 
+.gdocs-sync-error-notice {
+  margin-top: 6px;
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.3);
+  color: var(--clr-error);
+  font-size: 0.78rem;
+  line-height: 1.4;
+}
+
 /* placeholder */
 .rich-editor-content p.is-editor-empty:first-child::before {
   content: attr(data-placeholder);
